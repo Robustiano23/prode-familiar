@@ -1,31 +1,39 @@
 import React, { useState, useEffect } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // Integrantes de la familia
 const FAMILIA = ["Robustiano", "Laura", "Mario", "Renata", "Solana", "Vito"];
 
-// Partidos con sus códigos para banderas HD reales
+// Partidos con códigos para banderas HD
 const PARTIDOS_INICIALES = [
   { id: 1, local: "Francia", visitante: "Senegal", codeLocal: "fr", codeVisitante: "sn" },
   { id: 2, local: "Irak", visitante: "Noruega", codeLocal: "iq", codeVisitante: "no" },
   { id: 3, local: "Argentina", visitante: "Argelia", codeLocal: "ar", codeVisitante: "dz" }
 ];
 
+// Configuración de Firebase de tu proyecto familiar
+const firebaseConfig = {
+  apiKey: "AIzaSyAw7cwuZ6335gI6DmnQtrGNPaT0qgSTshg",
+  authDomain: "prode-familiar-64060.firebaseapp.com",
+  projectId: "prode-familiar-64060",
+  storageBucket: "prode-familiar-64060.firebasestorage.app",
+  messagingSenderId: "354003303370",
+  appId: "1:354003303370:web:587e95c6d6a4e62d3eed33"
+};
+
+// Inicializar Firebase y Firestore
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 export default function App() {
-  // Estado para los resultados REALES (arrancan todos en limpio y sin jugar)
-  const [resultadosReales, setResultadosReales] = useState(() => {
-    const guardados = localStorage.getItem('prode_resultados_reales');
-    return guardados ? JSON.parse(guardados) : {
-      1: { local: "", visitante: "", jugado: false },
-      2: { local: "", visitante: "", jugado: false },
-      3: { local: "", visitante: "", jugado: false },
-    };
+  const [resultadosReales, setResultadosReales] = useState({
+    1: { local: "", visitante: "", jugado: false },
+    2: { local: "", visitante: "", jugado: false },
+    3: { local: "", visitante: "", jugado: false },
   });
 
-  // Estado para los pronósticos (Prode) de la familia
   const [prode, setProde] = useState(() => {
-    const guardados = localStorage.getItem('prode_familia_votos');
-    if (guardados) return JSON.parse(guardados);
-
     const inicial = {};
     FAMILIA.forEach(miembro => {
       inicial[miembro] = {
@@ -39,50 +47,72 @@ export default function App() {
 
   const [tablaPosiciones, setTablaPosiciones] = useState([]);
 
-  // Guardar datos automáticamente cuando cambien
+  // ESCUCHAR EN VIVO LA BASE DE DATOS
   useEffect(() => {
-    localStorage.setItem('prode_resultados_reales', JSON.stringify(resultadosReales));
-  }, [resultadosReales]);
+    // Escuchar resultados globales de los partidos reales
+    const unsubPartidos = onSnapshot(doc(db, "mundial", "resultados"), (docSnap) => {
+      if (docSnap.exists()) {
+        setResultadosReales(docSnap.data());
+      }
+    });
 
-  useEffect(() => {
-    localStorage.setItem('prode_familia_votos', JSON.stringify(prode));
-  }, [prode]);
+    // Escuchar prodes de toda la familia
+    const unsubProde = onSnapshot(doc(db, "mundial", "pronosticos"), (docSnap) => {
+      if (docSnap.exists()) {
+        setProde(docSnap.data());
+      }
+    });
 
-  // Manejar cambios en las predicciones
-  const handleProdeChange = (miembro, partidoId, campo, valor) => {
-    setProde(prev => ({
-      ...prev,
+    return () => {
+      unsubPartidos();
+      unsubProde();
+    };
+  }, []);
+
+  // Guardar cambios del Prode en la nube en tiempo real
+  const handleProdeChange = async (miembro, partidoId, campo, valor) => {
+    const nuevoValor = valor === "" ? "" : parseInt(valor, 10);
+    const nuevoProde = {
+      ...prode,
       [miembro]: {
-        ...prev[miembro],
+        ...prode[miembro],
         [partidoId]: {
-          ...prev[miembro][partidoId],
-          [campo]: valor === "" ? "" : parseInt(valor, 10)
+          ...prode[miembro][partidoId],
+          [campo]: nuevoValor
         }
       }
-    }));
+    };
+    
+    setProde(nuevoProde);
+    await setDoc(doc(db, "mundial", "pronosticos"), nuevoProde);
   };
 
-  // Manejar cambios del administrador (Resultados reales de los partidos)
-  const handleRealChange = (partidoId, campo, valor) => {
-    setResultadosReales(prev => ({
-      ...prev,
+  // Guardar cambios del Administrador en la nube en tiempo real
+  const handleRealChange = async (partidoId, campo, valor) => {
+    const nuevoValor = valor === "" ? "" : parseInt(valor, 10);
+    const nuevosResultados = {
+      ...resultadosReales,
       [partidoId]: {
-        ...prev[partidoId],
-        [campo]: valor === "" ? "" : parseInt(valor, 10),
+        ...resultadosReales[partidoId],
+        [campo]: nuevoValor,
         jugado: true
       }
-    }));
+    };
+
+    setResultadosReales(nuevosResultados);
+    await setDoc(doc(db, "mundial", "resultados"), nuevosResultados);
   };
 
-  // Borrar el estado de un partido si se cargó mal
-  const resetPartidoReal = (partidoId) => {
-    setResultadosReales(prev => ({
-      ...prev,
+  const resetPartidoReal = async (partidoId) => {
+    const nuevosResultados = {
+      ...resultadosReales,
       [partidoId]: { local: "", visitante: "", jugado: false }
-    }));
+    };
+    setResultadosReales(nuevosResultados);
+    await setDoc(doc(db, "mundial", "resultados"), nuevosResultados);
   };
 
-  // Recalcular la tabla de posiciones con el sistema de 6, 3 y 0 puntos
+  // Lógica matemática para procesar las posiciones (6, 3 y 0 puntos)
   useEffect(() => {
     const calcularPuntos = () => {
       const puntajes = FAMILIA.map(miembro => {
@@ -90,21 +120,17 @@ export default function App() {
 
         PARTIDOS_INICIALES.forEach(partido => {
           const real = resultadosReales[partido.id];
-          const pronostico = prode[miembro][partido.id];
+          const pronostico = prode[miembro]?.[partido.id];
 
-          // Solo calcula si el partido se marcó como jugado y ambos cargaron datos
-          if (real.jugado && real.local !== "" && real.visitante !== "" && pronostico.local !== "" && pronostico.visitante !== "") {
+          if (real?.jugado && real.local !== "" && real.visitante !== "" && pronostico && pronostico.local !== "" && pronostico.visitante !== "") {
             const gReal = real.local;
             const pReal = real.visitante;
             const gProde = pronostico.local;
             const pProde = pronostico.visitante;
 
-            // Exacto (6 puntos)
             if (gReal === gProde && pReal === pProde) {
               puntosTotales += 6;
-            } 
-            // Aproximado / Ganador (3 puntos)
-            else if (
+            } else if (
               (gReal > pReal && gProde > pProde) || 
               (gReal < pReal && gProde < pProde) || 
               (gReal === pReal && gProde === pProde)
@@ -130,26 +156,26 @@ export default function App() {
       {/* Header */}
       <header className="text-center my-6">
         <h1 className="text-4xl sm:text-5xl font-extrabold tracking-tight bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 bg-clip-text text-transparent">
-          PRODE FAMILIAR MUNDIAL
+          PRODE FAMILIAR INTERACTIVO
         </h1>
         <p className="text-slate-400 mt-2 text-sm sm:text-base">
-          ¡Banderas HD activadas! Completá los pronósticos y mirá la tabla en tiempo real.
+          ¡Conectado en vivo! Todo cambio se actualiza al instante en los celus de toda la familia.
         </p>
       </header>
 
-      {/* ESTADO REAL DE LOS PARTIDOS */}
+      {/* Marcador Real */}
       <section className="max-w-7xl mx-auto mb-8 bg-slate-800/50 border border-slate-700/60 rounded-xl p-4">
         <h2 className="text-xs font-bold text-slate-400 tracking-wider uppercase mb-3 text-center sm:text-left">
-          📢 Marcador Real del Torneo
+          📢 Marcador Real del Torneo (Global)
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {PARTIDOS_INICIALES.map(partido => {
             const real = resultadosReales[partido.id];
-            const haJugado = real.jugado && real.local !== "" && real.visitante !== "";
+            const haJugado = real?.jugado && real.local !== "" && real.visitante !== "";
             return (
               <div key={partido.id} className="bg-slate-900/80 p-3 rounded-lg border border-slate-700 flex items-center justify-between">
                 <div className="flex items-center gap-2 text-sm w-5/12">
-                  <img src={`https://flagcdn.com/w40/${partido.codeLocal}.png`} alt={partido.local} className="w-6 h-4 object-cover rounded shadow-sm" />
+                  <img src={`https://flagcdn.com/w40/${partido.codeLocal}.png`} alt="" className="w-6 h-4 object-cover rounded shadow-sm" />
                   <span className="truncate">{partido.local}</span>
                 </div>
                 <div className={`w-2/12 text-center font-mono font-bold px-2 py-1 rounded text-lg ${haJugado ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-slate-800 text-slate-500'}`}>
@@ -157,7 +183,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center justify-end gap-2 text-sm w-5/12 text-right">
                   <span className="truncate">{partido.visitante}</span>
-                  <img src={`https://flagcdn.com/w40/${partido.codeVisitante}.png`} alt={partido.visitante} className="w-6 h-4 object-cover rounded shadow-sm" />
+                  <img src={`https://flagcdn.com/w40/${partido.codeVisitante}.png`} alt="" className="w-6 h-4 object-cover rounded shadow-sm" />
                 </div>
               </div>
             );
@@ -167,10 +193,9 @@ export default function App() {
 
       <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* Pronósticos */}
+        {/* Pronósticos de la Familia */}
         <section className="lg:col-span-2 space-y-6">
           <h2 className="text-2xl font-bold border-b border-slate-700 pb-2 text-cyan-400">📊 Pronósticos de la Familia</h2>
-          
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {FAMILIA.map(miembro => (
               <div key={miembro} className="bg-slate-800 rounded-xl p-4 shadow-lg border border-slate-700/50 hover:border-cyan-500/30 transition-all">
@@ -183,7 +208,7 @@ export default function App() {
                   {PARTIDOS_INICIALES.map(partido => (
                     <div key={partido.id} className="flex items-center justify-between bg-slate-900/60 p-2 rounded-lg text-sm">
                       <div className="w-2/5 flex items-center gap-2">
-                        <img src={`https://flagcdn.com/w40/${partido.codeLocal}.png`} alt={partido.local} className="w-5 h-3.5 object-cover rounded" />
+                        <img src={`https://flagcdn.com/w40/${partido.codeLocal}.png`} alt="" className="w-5 h-3.5 object-cover rounded" />
                         <span className="truncate">{partido.local}</span>
                       </div>
                       
@@ -192,7 +217,7 @@ export default function App() {
                           type="number"
                           min="0"
                           placeholder="-"
-                          value={prode[miembro][partido.id].local}
+                          value={prode[miembro]?.[partido.id]?.local ?? ""}
                           onChange={(e) => handleProdeChange(miembro, partido.id, 'local', e.target.value)}
                           className="w-10 h-8 bg-slate-700 text-center rounded font-bold text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
@@ -201,7 +226,7 @@ export default function App() {
                           type="number"
                           min="0"
                           placeholder="-"
-                          value={prode[miembro][partido.id].visitante}
+                          value={prode[miembro]?.[partido.id]?.visitante ?? ""}
                           onChange={(e) => handleProdeChange(miembro, partido.id, 'visitante', e.target.value)}
                           className="w-10 h-8 bg-slate-700 text-center rounded font-bold text-white focus:outline-none focus:ring-2 focus:ring-cyan-500 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                         />
@@ -209,7 +234,7 @@ export default function App() {
 
                       <div className="w-2/5 flex items-center justify-end gap-2 text-right">
                         <span className="truncate">{partido.visitante}</span>
-                        <img src={`https://flagcdn.com/w40/${partido.codeVisitante}.png`} alt={partido.visitante} className="w-5 h-3.5 object-cover rounded" />
+                        <img src={`https://flagcdn.com/w40/${partido.codeVisitante}.png`} alt="" className="w-5 h-3.5 object-cover rounded" />
                       </div>
                     </div>
                   ))}
@@ -221,8 +246,7 @@ export default function App() {
 
         {/* Tabla de Posiciones */}
         <section className="space-y-6">
-          <h2 className="text-2xl font-bold border-b border-slate-700 pb-2 text-emerald-400">🏆 Tabla de Posiciones</h2>
-          
+          <h2 className="text-2xl font-bold border-b border-slate-700 pb-2 text-emerald-400">🏆 Tabla General</h2>
           <div className="bg-slate-800 rounded-xl p-4 shadow-xl border border-slate-700 overflow-hidden">
             <table className="w-full text-left border-collapse">
               <thead>
@@ -233,24 +257,17 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {tablaPosiciones.map((fila, index) => {
-                  let medalla = "";
-                  if (index === 0) medalla = "🥇";
-                  else if (index === 1) medalla = "🥈";
-                  else if (index === 2) medalla = "🥉";
-
-                  return (
-                    <tr key={fila.nombre} className={`border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20 transition-colors ${index === 0 ? 'bg-emerald-500/10 font-semibold' : ''}`}>
-                      <td className="py-3 px-3 text-center font-bold">
-                        {medalla ? medalla : `${index + 1}°`}
-                      </td>
-                      <td className="py-3 px-3 text-slate-200">{fila.nombre}</td>
-                      <td className="py-3 px-3 text-right font-mono font-bold text-emerald-400 text-lg">
-                        {fila.puntos}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {tablaPosiciones.map((fila, index) => (
+                  <tr key={fila.nombre} className={`border-b border-slate-700/40 last:border-0 hover:bg-slate-700/20 transition-colors ${index === 0 ? 'bg-emerald-500/10 font-semibold' : ''}`}>
+                    <td className="py-3 px-3 text-center font-bold">
+                      {index === 0 ? "🥇" : index === 1 ? "🥈" : index === 2 ? "🥉" : `${index + 1}°`}
+                    </td>
+                    <td className="py-3 px-3 text-slate-200">{fila.nombre}</td>
+                    <td className="py-3 px-3 text-right font-mono font-bold text-emerald-400 text-lg">
+                      {fila.puntos}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -260,12 +277,11 @@ export default function App() {
       {/* PANEL DE CONTROL MANUAL (ADMIN) */}
       <footer className="max-w-3xl mx-auto mt-16 mb-8 bg-slate-800/80 border border-amber-500/30 rounded-xl p-6 shadow-xl">
         <h2 className="text-xl font-bold text-amber-400 flex items-center gap-2 mb-1">
-          ⚙️ Panel del Administrador (Cargar Goles Reales)
+          ⚙️ Panel del Administrador (Goles Reales globales)
         </h2>
         <p className="text-xs text-slate-400 mb-4">
-          Poné acá los goles a medida que terminen o vayan avanzando los partidos reales. ¡La app calculará todo al toque!
+          Modificá los goles reales acá cuando terminen los partidos. Se actualizará inmediatamente en las pantallas de todos.
         </p>
-
         <div className="space-y-3">
           {PARTIDOS_INICIALES.map(partido => (
             <div key={partido.id} className="flex flex-col sm:flex-row items-center justify-between bg-slate-900 p-3 rounded-lg border border-slate-700 gap-3">
@@ -276,14 +292,13 @@ export default function App() {
                 <span>{partido.visitante}</span>
                 <img src={`https://flagcdn.com/w40/${partido.codeVisitante}.png`} alt="" className="w-5 h-3.5 object-cover rounded" />
               </div>
-              
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1">
                   <input
                     type="number"
                     min="0"
                     placeholder="L"
-                    value={resultadosReales[partido.id].local}
+                    value={resultadosReales[partido.id]?.local ?? ""}
                     onChange={(e) => handleRealChange(partido.id, 'local', e.target.value)}
                     className="w-12 h-8 bg-slate-700 text-center rounded font-bold text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
@@ -292,12 +307,11 @@ export default function App() {
                     type="number"
                     min="0"
                     placeholder="V"
-                    value={resultadosReales[partido.id].visitante}
+                    value={resultadosReales[partido.id]?.visitante ?? ""}
                     onChange={(e) => handleRealChange(partido.id, 'visitante', e.target.value)}
                     className="w-12 h-8 bg-slate-700 text-center rounded font-bold text-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500"
                   />
                 </div>
-                
                 <button
                   onClick={() => resetPartidoReal(partido.id)}
                   className="px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs rounded border border-rose-500/20 transition-all"
