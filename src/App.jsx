@@ -3,7 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // Integrantes de la familia
-const FAMILIA = ["Robustiano", "Laura", "Mario", "Renata", "Solana", "Vito"];
+const FAMILIA = ["Robustiano", "Laura", "Mario", "Renatta", "Solana", "Vito"];
 
 // Partidos con códigos para banderas HD
 const PARTIDOS_INICIALES = [
