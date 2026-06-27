@@ -3,13 +3,16 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, doc, onSnapshot, setDoc } from 'firebase/firestore';
 
 // Integrantes de la familia
-const FAMILIA = ["Robustiano", "Laura", "Mario", "Renatta", "Solana", "Vito"];
+const FAMILIA = ["Robustiano", "Laura", "Mario", "Renata", "Solana", "Vito"];
 
-// Partidos con códigos para banderas HD
+// Partidos corregidos según la imagen con códigos para banderas HD reales
 const PARTIDOS_INICIALES = [
-  { id: 1, local: "Francia", visitante: "Senegal", codeLocal: "fr", codeVisitante: "sn" },
-  { id: 2, local: "Irak", visitante: "Noruega", codeLocal: "iq", codeVisitante: "no" },
-  { id: 3, local: "Argentina", visitante: "Argelia", codeLocal: "ar", codeVisitante: "dz" }
+  { id: 1, local: "Panamá", visitante: "Inglaterra", codeLocal: "pa", codeVisitante: "gb-eng" },
+  { id: 2, local: "Croacia", visitante: "Ghana", codeLocal: "hr", codeVisitante: "gh" },
+  { id: 3, local: "Colombia", visitante: "Portugal", codeLocal: "co", codeVisitante: "pt" },
+  { id: 4, local: "RD Congo", visitante: "Uzbekistán", codeLocal: "cd", codeVisitante: "uz" },
+  { id: 5, local: "Argelia", visitante: "Austria", codeLocal: "dz", codeVisitante: "at" },
+  { id: 6, local: "Argentina", visitante: "Jordania", codeLocal: "ar", codeVisitante: "jo" }
 ];
 
 // Configuración de Firebase de tu proyecto familiar
@@ -27,36 +30,36 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 export default function App() {
-  const [resultadosReales, setResultadosReales] = useState({
-    1: { local: "", visitante: "", jugado: false },
-    2: { local: "", visitante: "", jugado: false },
-    3: { local: "", visitante: "", jugado: false },
-  });
-
-  const [prode, setProde] = useState(() => {
-    const inicial = {};
-    FAMILIA.forEach(miembro => {
-      inicial[miembro] = {
-        1: { local: "", visitante: "" },
-        2: { local: "", visitante: "" },
-        3: { local: "", visitante: "" },
-      };
-    });
-    return inicial;
-  });
-
+  const [resultadosReales, setResultadosReales] = useState({});
+  const [prode, setProde] = useState({});
   const [tablaPosiciones, setTablaPosiciones] = useState([]);
+
+  // Inicializar estados basados en la grilla corregida
+  useEffect(() => {
+    const initResultados = {};
+    PARTIDOS_INICIALES.forEach(p => {
+      initResultados[p.id] = { local: "", visitante: "", jugado: false };
+    });
+    setResultadosReales(initResultados);
+
+    const initProde = {};
+    FAMILIA.forEach(miembro => {
+      initProde[miembro] = {};
+      PARTIDOS_INICIALES.forEach(p => {
+        initProde[miembro][p.id] = { local: "", visitante: "" };
+      });
+    });
+    setProde(initProde);
+  }, []);
 
   // ESCUCHAR EN VIVO LA BASE DE DATOS
   useEffect(() => {
-    // Escuchar resultados globales de los partidos reales
     const unsubPartidos = onSnapshot(doc(db, "mundial", "resultados"), (docSnap) => {
       if (docSnap.exists()) {
         setResultadosReales(docSnap.data());
       }
     });
 
-    // Escuchar prodes de toda la familia
     const unsubProde = onSnapshot(doc(db, "mundial", "pronosticos"), (docSnap) => {
       if (docSnap.exists()) {
         setProde(docSnap.data());
@@ -77,7 +80,7 @@ export default function App() {
       [miembro]: {
         ...prode[miembro],
         [partidoId]: {
-          ...prode[miembro][partidoId],
+          ...prode[miembro]?.[partidoId],
           [campo]: nuevoValor
         }
       }
@@ -114,6 +117,8 @@ export default function App() {
 
   // Lógica matemática para procesar las posiciones (6, 3 y 0 puntos)
   useEffect(() => {
+    if (Object.keys(prode).length === 0) return;
+
     const calcularPuntos = () => {
       const puntajes = FAMILIA.map(miembro => {
         let puntosTotales = 0;
